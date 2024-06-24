@@ -116,9 +116,9 @@ def get_market_sentiment(data):
     returns = data['Close'].pct_change().dropna()
     recent_returns = returns.tail(10)  # Look at last 10 days
     if recent_returns.mean() > 0:
-        return "Bullish"
+        return "Bullish 🐂"
     else:
-        return "Bearish"
+        return "Bearish 🐻"
 
 # Function to create marquee ticker
 def create_marquee_ticker():
@@ -129,7 +129,9 @@ def create_marquee_ticker():
     for stock in popular_stocks:
         price = ticker_data[stock].iloc[-1]
         change = (price - ticker_data[stock].iloc[0]) / ticker_data[stock].iloc[0] * 100
-        ticker_text += f"{stock}: ${price:.2f} ({change:.2f}%) | "
+        color = "green" if change >= 0 else "red"
+        arrow = "▲" if change >= 0 else "▼"
+        ticker_text += f"{stock}: ${price:.2f} <span style='color:{color};'>{arrow} ({change:.2f}%)</span> | "
     
     return ticker_text.strip('| ')
 
@@ -199,6 +201,8 @@ def main():
             width: max-content;
             padding-left: 100%;
             animation: marquee 60s linear infinite;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
         }
         @keyframes marquee {
             0% {transform: translate(0, 0);}
