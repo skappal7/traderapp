@@ -4,7 +4,6 @@ import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_ta as ta
-import numpy as np
 from datetime import datetime, timedelta
 
 # List of popular stocks and S&P 500 sector indices
