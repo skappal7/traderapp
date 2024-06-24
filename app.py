@@ -56,13 +56,10 @@ def plot_stock_data(data, indicators):
     return fig
 
 # Function to calculate technical indicators
-def add_indicators(data, indicators):
-    if 'SMA' in indicators:
-        data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
-    if 'EMA' in indicators:
-        data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
-    if 'RSI' in indicators:
-        data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
+def add_indicators(data):
+    data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
+    data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
+    data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
     return data
 
 # Function for backtesting
@@ -147,8 +144,19 @@ def create_lstm_model(X_train, y_train):
 
 # Function to predict future returns
 def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50, 60]):
+    # Ensure all required features are present
+    if 'SMA' not in data.columns:
+        data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
+    if 'EMA' not in data.columns:
+        data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
+    if 'RSI' not in data.columns:
+        data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
+    
     features = ['Close', 'Volume', 'SMA', 'EMA', 'RSI']
     data_for_prediction = data[features].copy()
+    
+    # Handle NaN values
+    data_for_prediction = data_for_prediction.dropna()
     
     X, y, scaler = prepare_data_for_lstm(data_for_prediction.values)
     
@@ -241,7 +249,7 @@ def main():
     
     if not data.empty:
         # Add indicators
-        data = add_indicators(data, indicators)
+        data = add_indicators(data)
 
         # Plot stock data
         st.plotly_chart(plot_stock_data(data, indicators))
