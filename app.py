@@ -118,18 +118,6 @@ def create_marquee_ticker():
     
     return ticker_text.strip('| ')
 
-# Function to prepare data for LSTM
-def prepare_data_for_lstm(data, look_back=60):
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data)
-    
-    X, y = [], []
-    for i in range(look_back, len(scaled_data)):
-        X.append(scaled_data[i-look_back:i])
-        y.append(scaled_data[i, 0])  # Predicting the 'Close' price
-    
-    return np.array(X), np.array(y), scaler
-
 # Function to create and train LSTM model
 def create_lstm_model(X_train, y_train):
     model = Sequential([
@@ -158,7 +146,16 @@ def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50,
     # Handle NaN values
     data_for_prediction = data_for_prediction.dropna()
     
-    X, y, scaler = prepare_data_for_lstm(data_for_prediction.values)
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data_for_prediction)
+    
+    X, y = [], []
+    look_back = 60
+    for i in range(look_back, len(scaled_data)):
+        X.append(scaled_data[i-look_back:i])
+        y.append(scaled_data[i, 0])  # Predicting the 'Close' price
+    
+    X, y = np.array(X), np.array(y)
     
     # Use 80% of data for training
     train_size = int(len(X) * 0.8)
@@ -172,17 +169,17 @@ def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50,
     future_predictions = []
     
     for _ in range(max(days)):
-        next_pred = model.predict(last_sequence.reshape(1, X.shape[1], X.shape[2]))[0, 0]
+        next_pred = model.predict(last_sequence.reshape(1, look_back, len(features)))[0, 0]
         future_predictions.append(next_pred)
         last_sequence = np.roll(last_sequence, -1, axis=0)
-        last_sequence[-1] = next_pred
+        last_sequence[-1] = np.array([next_pred] + [last_sequence[-1, i] for i in range(1, len(features))])
     
-    # Inverse transform predictions
-    future_predictions = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))
+    # Inverse transform predictions (for 'Close' price only)
+    future_close_prices = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))[:,0]
     
     # Calculate returns
     last_price = data['Close'].iloc[-1]
-    future_returns = [(price[0] / last_price - 1) for price in future_predictions]
+    future_returns = [(price / last_price - 1) for price in future_close_prices]
     
     # Calculate expected values
     expected_values = [investment_amount * (1 + future_returns[day-1]) for day in days]
@@ -278,7 +275,9 @@ def main():
         st.subheader('Future Returns Prediction')
         st.write("Note: This prediction is based on historical data and should not be the sole basis for investment decisions.")
         investment_amount = st.number_input('Enter Investment Amount ($)', min_value=1, value=1000)
-        future_returns = predict_future_returns(data, investment_amount)
+        
+        with st.spinner('Calculating future returns...'):
+            future_returns = predict_future_returns(data, investment_amount)
         
         st.write("Predicted future values of your investment:")
         for days, value in future_returns.items():
