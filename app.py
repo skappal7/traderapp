@@ -132,8 +132,11 @@ def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50,
         df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         
         features = ['Date', 'SMA', 'EMA', 'RSI']
-        X = df[features].dropna()
-        y = df['Close'].dropna()
+        
+        # Drop NaN values and ensure consistent data
+        df_clean = df.dropna()
+        X = df_clean[features]
+        y = df_clean['Close']
         
         # Scale features
         scaler = StandardScaler()
