@@ -1,11 +1,15 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import ta
-import numpy as np
 from datetime import datetime, timedelta
+from sklearn.preprocessing import MinMaxScaler
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.optimizers import Adam
 
 # List of popular stocks and S&P 500 sector indices
 popular_stocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'JNJ', 'V']
@@ -61,16 +65,25 @@ def add_indicators(data, indicators):
         data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
     return data
 
-# Function for simple backtesting
-def simple_backtest(data, strategy='SMA Crossover'):
+# Function for backtesting
+def backtest(data, strategy='SMA Crossover'):
     if strategy == 'SMA Crossover':
         data['SMA_short'] = ta.trend.sma_indicator(data['Close'], window=10)
         data['SMA_long'] = ta.trend.sma_indicator(data['Close'], window=30)
         data['Position'] = np.where(data['SMA_short'] > data['SMA_long'], 1, 0)
-        data['Returns'] = data['Close'].pct_change()
-        data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-        cumulative_returns = (1 + data['Strategy_Returns']).cumprod()
-        return cumulative_returns.iloc[-1] - 1
+    elif strategy == 'RSI':
+        data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
+        data['Position'] = np.where(data['RSI'] < 30, 1, np.where(data['RSI'] > 70, -1, 0))
+    elif strategy == 'MACD':
+        macd = ta.trend.MACD(data['Close'])
+        data['MACD'] = macd.macd()
+        data['Signal'] = macd.macd_signal()
+        data['Position'] = np.where(data['MACD'] > data['Signal'], 1, -1)
+    
+    data['Returns'] = data['Close'].pct_change()
+    data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
+    cumulative_returns = (1 + data['Strategy_Returns']).cumprod()
+    return cumulative_returns.iloc[-1] - 1
 
 # Function to get buy/sell/hold recommendation
 def get_recommendation(data):
@@ -107,6 +120,66 @@ def create_marquee_ticker():
         ticker_text += f"{stock}: ${price:.2f} ({change:.2f}%) | "
     
     return ticker_text.strip('| ')
+
+# Function to prepare data for LSTM
+def prepare_data_for_lstm(data, look_back=60):
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_data = scaler.fit_transform(data)
+    
+    X, y = [], []
+    for i in range(look_back, len(scaled_data)):
+        X.append(scaled_data[i-look_back:i])
+        y.append(scaled_data[i, 0])  # Predicting the 'Close' price
+    
+    return np.array(X), np.array(y), scaler
+
+# Function to create and train LSTM model
+def create_lstm_model(X_train, y_train):
+    model = Sequential([
+        LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
+        LSTM(units=50, return_sequences=False),
+        Dense(units=25),
+        Dense(units=1)
+    ])
+    model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
+    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
+    return model
+
+# Function to predict future returns
+def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50, 60]):
+    features = ['Close', 'Volume', 'SMA', 'EMA', 'RSI']
+    data_for_prediction = data[features].copy()
+    
+    X, y, scaler = prepare_data_for_lstm(data_for_prediction.values)
+    
+    # Use 80% of data for training
+    train_size = int(len(X) * 0.8)
+    X_train, X_test = X[:train_size], X[train_size:]
+    y_train, y_test = y[:train_size], y[train_size:]
+    
+    model = create_lstm_model(X_train, y_train)
+    
+    # Predict future values
+    last_sequence = X[-1]
+    future_predictions = []
+    
+    for _ in range(max(days)):
+        next_pred = model.predict(last_sequence.reshape(1, X.shape[1], X.shape[2]))[0, 0]
+        future_predictions.append(next_pred)
+        last_sequence = np.roll(last_sequence, -1, axis=0)
+        last_sequence[-1] = next_pred
+    
+    # Inverse transform predictions
+    future_predictions = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))
+    
+    # Calculate returns
+    last_price = data['Close'].iloc[-1]
+    future_returns = [(price[0] / last_price - 1) for price in future_predictions]
+    
+    # Calculate expected values
+    expected_values = [investment_amount * (1 + future_returns[day-1]) for day in days]
+    
+    return dict(zip(days, expected_values))
 
 # Main Streamlit app
 def main():
@@ -188,9 +261,20 @@ def main():
             st.write(data)
 
         # Backtesting
-        st.subheader('Simple Backtesting')
-        backtest_result = simple_backtest(data)
-        st.write(f'Strategy Return: {backtest_result:.2%}')
+        st.subheader('Backtesting')
+        strategy = st.selectbox('Select Backtesting Strategy', ['SMA Crossover', 'RSI', 'MACD'])
+        backtest_result = backtest(data, strategy)
+        st.write(f'Strategy Return ({strategy}): {backtest_result:.2%}')
+
+        # Future Returns Prediction
+        st.subheader('Future Returns Prediction')
+        st.write("Note: This prediction is based on historical data and should not be the sole basis for investment decisions.")
+        investment_amount = st.number_input('Enter Investment Amount ($)', min_value=1, value=1000)
+        future_returns = predict_future_returns(data, investment_amount)
+        
+        st.write("Predicted future values of your investment:")
+        for days, value in future_returns.items():
+            st.write(f"{days} days: ${value:.2f}")
 
         # Price Alerts (simulated)
         st.subheader('Price Alerts')
