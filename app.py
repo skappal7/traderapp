@@ -5,6 +5,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import pandas_ta as ta
 from datetime import datetime, timedelta
+import numpy as np
+from numpy import nan as NaN
 
 # List of popular stocks and S&P 500 sector indices
 popular_stocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'JNJ', 'V']
