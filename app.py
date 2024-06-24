@@ -6,7 +6,8 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import ta
 from datetime import datetime, timedelta
-from fbprophet import Prophet
+from sklearn.linear_model import LinearRegression
+from sklearn.preprocessing import StandardScaler
 import logging
 
 logging.basicConfig(level=logging.ERROR)
@@ -118,33 +119,44 @@ def create_marquee_ticker():
     
     return ticker_text.strip('| ')
 
-# Function to predict future returns using Prophet
+# Function to predict future returns
 def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50, 60]):
     try:
-        # Prepare data for Prophet
-        df = data.reset_index()[['Date', 'Close']]
-        df.columns = ['ds', 'y']
+        # Prepare data
+        df = data.reset_index()
+        df['Date'] = (df['Date'] - df['Date'].min()).dt.days
         
-        # Create and fit the model
-        model = Prophet()
-        model.fit(df)
+        # Create features
+        df['SMA'] = ta.trend.sma_indicator(df['Close'], window=20)
+        df['EMA'] = ta.trend.ema_indicator(df['Close'], window=20)
+        df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
         
-        # Create future dates for prediction
-        future_dates = model.make_future_dataframe(periods=max(days))
+        features = ['Date', 'SMA', 'EMA', 'RSI']
+        X = df[features].dropna()
+        y = df['Close'].dropna()
         
-        # Make predictions
-        forecast = model.predict(future_dates)
+        # Scale features
+        scaler = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
         
-        # Calculate returns and expected values
-        last_price = data['Close'].iloc[-1]
-        future_returns = {}
-        for day in days:
-            future_price = forecast.iloc[-day]['yhat']
-            returns = (future_price / last_price) - 1
-            expected_value = investment_amount * (1 + returns)
-            future_returns[day] = expected_value
+        # Fit linear regression model
+        model = LinearRegression()
+        model.fit(X_scaled, y)
         
-        return future_returns
+        # Predict future values
+        last_date = X['Date'].iloc[-1]
+        future_dates = np.array([[last_date + i for i in days]])
+        future_features = np.hstack([future_dates.T, X_scaled[-1:, 1:].repeat(len(days), axis=0)])
+        future_prices = model.predict(future_features)
+        
+        # Calculate returns
+        last_price = y.iloc[-1]
+        future_returns = [(price / last_price - 1) for price in future_prices]
+        
+        # Calculate expected values
+        expected_values = [investment_amount * (1 + return_) for return_ in future_returns]
+        
+        return dict(zip(days, expected_values))
     
     except Exception as e:
         logging.error(f"Error in predict_future_returns: {str(e)}")
