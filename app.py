@@ -10,6 +10,9 @@ from sklearn.preprocessing import MinMaxScaler
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense
 from tensorflow.keras.optimizers import Adam
+import logging
+
+logging.basicConfig(level=logging.ERROR)
 
 # List of popular stocks and S&P 500 sector indices
 popular_stocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'JNJ', 'V']
@@ -132,59 +135,65 @@ def create_lstm_model(X_train, y_train):
 
 # Function to predict future returns
 def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50, 60]):
-    # Ensure all required features are present
-    if 'SMA' not in data.columns:
-        data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
-    if 'EMA' not in data.columns:
-        data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
-    if 'RSI' not in data.columns:
-        data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
-    
-    features = ['Close', 'Volume', 'SMA', 'EMA', 'RSI']
-    data_for_prediction = data[features].copy()
-    
-    # Handle NaN values
-    data_for_prediction = data_for_prediction.dropna()
-    
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(data_for_prediction)
-    
-    X, y = [], []
-    look_back = 60
-    for i in range(look_back, len(scaled_data)):
-        X.append(scaled_data[i-look_back:i])
-        y.append(scaled_data[i, 0])  # Predicting the 'Close' price
-    
-    X, y = np.array(X), np.array(y)
-    
-    # Use 80% of data for training
-    train_size = int(len(X) * 0.8)
-    X_train, X_test = X[:train_size], X[train_size:]
-    y_train, y_test = y[:train_size], y[train_size:]
-    
-    model = create_lstm_model(X_train, y_train)
-    
-    # Predict future values
-    last_sequence = X[-1]
-    future_predictions = []
-    
-    for _ in range(max(days)):
-        next_pred = model.predict(last_sequence.reshape(1, look_back, len(features)))[0, 0]
-        future_predictions.append(next_pred)
-        last_sequence = np.roll(last_sequence, -1, axis=0)
-        last_sequence[-1] = np.array([next_pred] + [last_sequence[-1, i] for i in range(1, len(features))])
-    
-    # Inverse transform predictions (for 'Close' price only)
-    future_close_prices = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))[:,0]
-    
-    # Calculate returns
-    last_price = data['Close'].iloc[-1]
-    future_returns = [(price / last_price - 1) for price in future_close_prices]
-    
-    # Calculate expected values
-    expected_values = [investment_amount * (1 + future_returns[day-1]) for day in days]
-    
-    return dict(zip(days, expected_values))
+    try:
+        # Ensure all required features are present
+        if 'SMA' not in data.columns:
+            data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
+        if 'EMA' not in data.columns:
+            data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
+        if 'RSI' not in data.columns:
+            data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
+        
+        features = ['Close', 'Volume', 'SMA', 'EMA', 'RSI']
+        data_for_prediction = data[features].copy()
+        
+        # Handle NaN values
+        data_for_prediction = data_for_prediction.dropna()
+        
+        scaler = MinMaxScaler(feature_range=(0, 1))
+        scaled_data = scaler.fit_transform(data_for_prediction)
+        
+        X, y = [], []
+        look_back = 60
+        for i in range(look_back, len(scaled_data)):
+            X.append(scaled_data[i-look_back:i])
+            y.append(scaled_data[i, 0])  # Predicting the 'Close' price
+        
+        X, y = np.array(X), np.array(y)
+        
+        # Use 80% of data for training
+        train_size = int(len(X) * 0.8)
+        X_train, X_test = X[:train_size], X[train_size:]
+        y_train, y_test = y[:train_size], y[train_size:]
+        
+        model = create_lstm_model(X_train, y_train)
+        
+        # Predict future values
+        last_sequence = X[-1]
+        future_predictions = []
+        
+        for _ in range(max(days)):
+            next_pred = model.predict(last_sequence.reshape(1, look_back, len(features)))[0, 0]
+            future_predictions.append(next_pred)
+            last_sequence = np.roll(last_sequence, -1, axis=0)
+            last_sequence[-1] = np.array([next_pred] + [last_sequence[-1, i] for i in range(1, len(features))])
+        
+        # Inverse transform predictions (for 'Close' price only)
+        future_close_prices = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))[:,0]
+        
+        # Calculate returns
+        last_price = data['Close'].iloc[-1]
+        future_returns = [(price / last_price - 1) for price in future_close_prices]
+        
+        # Calculate expected values
+        expected_values = [investment_amount * (1 + future_returns[day-1]) for day in days]
+        
+        return dict(zip(days, expected_values))
+
+    except Exception as e:
+        logging.error(f"Error in predict_future_returns: {str(e)}")
+        st.error(f"An error occurred while predicting future returns: {str(e)}")
+        return {}
 
 # Main Streamlit app
 def main():
@@ -279,9 +288,12 @@ def main():
         with st.spinner('Calculating future returns...'):
             future_returns = predict_future_returns(data, investment_amount)
         
-        st.write("Predicted future values of your investment:")
-        for days, value in future_returns.items():
-            st.write(f"{days} days: ${value:.2f}")
+        if future_returns:
+            st.write("Predicted future values of your investment:")
+            for days, value in future_returns.items():
+                st.write(f"{days} days: ${value:.2f}")
+        else:
+            st.write("Unable to predict future returns at this time.")
 
         # Price Alerts (simulated)
         st.subheader('Price Alerts')
