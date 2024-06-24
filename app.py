@@ -8,6 +8,8 @@ import ta
 from datetime import datetime, timedelta
 from sklearn.linear_model import LinearRegression
 from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import r2_score
 import logging
 
 logging.basicConfig(level=logging.ERROR)
@@ -58,41 +60,53 @@ def plot_stock_data(data, indicators):
 
 # Function to calculate technical indicators
 def add_indicators(data):
-    data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
-    data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
+    data['SMA20'] = ta.trend.sma_indicator(data['Close'], window=20)
+    data['SMA120'] = ta.trend.sma_indicator(data['Close'], window=120)
+    data['EMA20'] = ta.trend.ema_indicator(data['Close'], window=20)
     data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
+    data['VWAP'] = ta.volume.volume_weighted_average_price(data['High'], data['Low'], data['Close'], data['Volume'])
     return data
 
-# Function for backtesting
-def backtest(data, strategy='SMA Crossover'):
-    if strategy == 'SMA Crossover':
-        data['SMA_short'] = ta.trend.sma_indicator(data['Close'], window=10)
-        data['SMA_long'] = ta.trend.sma_indicator(data['Close'], window=30)
-        data['Position'] = np.where(data['SMA_short'] > data['SMA_long'], 1, 0)
-    elif strategy == 'RSI':
-        data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
-        data['Position'] = np.where(data['RSI'] < 30, 1, np.where(data['RSI'] > 70, -1, 0))
-    elif strategy == 'MACD':
-        macd = ta.trend.MACD(data['Close'])
-        data['MACD'] = macd.macd()
-        data['Signal'] = macd.macd_signal()
-        data['Position'] = np.where(data['MACD'] > data['Signal'], 1, -1)
-    
+# Function for trends and momentum strategy
+def trends_momentum_strategy(data):
+    data['Signal'] = np.where(data['SMA20'] > data['SMA120'], 1, 0)
     data['Returns'] = data['Close'].pct_change()
-    data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
-    cumulative_returns = (1 + data['Strategy_Returns']).cumprod()
-    return cumulative_returns.iloc[-1] - 1
+    data['Strategy_Returns'] = data['Signal'].shift(1) * data['Returns']
+    return data['Strategy_Returns'].cumsum().iloc[-1]
+
+# Function for mean reversion strategy
+def mean_reversion_strategy(data):
+    data['Signal'] = np.where(data['Close'] < data['SMA20'], 1, 0)
+    data['Returns'] = data['Close'].pct_change()
+    data['Strategy_Returns'] = data['Signal'].shift(1) * data['Returns']
+    return data['Strategy_Returns'].cumsum().iloc[-1]
+
+# Function for VWAP strategy
+def vwap_strategy(data):
+    data['Signal'] = np.where(data['Close'] < data['VWAP'], 1, 0)
+    data['Returns'] = data['Close'].pct_change()
+    data['Strategy_Returns'] = data['Signal'].shift(1) * data['Returns']
+    return data['Strategy_Returns'].cumsum().iloc[-1]
+
+# Function for statistical arbitrage strategy
+def statistical_arbitrage_strategy(data1, data2):
+    spread = data1['Close'] - data2['Close']
+    z_score = (spread - spread.mean()) / spread.std()
+    data1['Signal'] = np.where(z_score > 1, -1, np.where(z_score < -1, 1, 0))
+    data1['Returns'] = data1['Close'].pct_change()
+    data1['Strategy_Returns'] = data1['Signal'].shift(1) * data1['Returns']
+    return data1['Strategy_Returns'].cumsum().iloc[-1]
 
 # Function to get buy/sell/hold recommendation
 def get_recommendation(data):
     last_close = data['Close'].iloc[-1]
-    sma_20 = ta.trend.sma_indicator(data['Close'], window=20).iloc[-1]
-    sma_50 = ta.trend.sma_indicator(data['Close'], window=50).iloc[-1]
-    rsi = ta.momentum.rsi(data['Close'], window=14).iloc[-1]
+    sma_20 = data['SMA20'].iloc[-1]
+    sma_120 = data['SMA120'].iloc[-1]
+    rsi = data['RSI'].iloc[-1]
     
-    if last_close > sma_20 and last_close > sma_50 and rsi < 70:
+    if last_close > sma_20 and last_close > sma_120 and rsi < 70:
         return "Buy"
-    elif last_close < sma_20 and last_close < sma_50 and rsi > 30:
+    elif last_close < sma_20 and last_close < sma_120 and rsi > 30:
         return "Sell"
     else:
         return "Hold"
@@ -122,49 +136,44 @@ def create_marquee_ticker():
 # Function to predict future returns
 def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50, 60]):
     try:
-        # Prepare data
         df = data.reset_index()
         df['Date'] = (df['Date'] - df['Date'].min()).dt.days
         
-        # Create features
-        df['SMA'] = ta.trend.sma_indicator(df['Close'], window=20)
-        df['EMA'] = ta.trend.ema_indicator(df['Close'], window=20)
-        df['RSI'] = ta.momentum.rsi(df['Close'], window=14)
+        features = ['Date', 'SMA20', 'EMA20', 'RSI', 'VWAP']
         
-        features = ['Date', 'SMA', 'EMA', 'RSI']
-        
-        # Drop NaN values and ensure consistent data
         df_clean = df.dropna()
         X = df_clean[features]
         y = df_clean['Close']
         
-        # Scale features
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        
         scaler = StandardScaler()
-        X_scaled = scaler.fit_transform(X)
+        X_train_scaled = scaler.fit_transform(X_train)
+        X_test_scaled = scaler.transform(X_test)
         
-        # Fit linear regression model
         model = LinearRegression()
-        model.fit(X_scaled, y)
+        model.fit(X_train_scaled, y_train)
         
-        # Predict future values
+        # Calculate model accuracy
+        y_pred = model.predict(X_test_scaled)
+        model_accuracy = r2_score(y_test, y_pred)
+        
         last_date = X['Date'].iloc[-1]
         future_dates = np.array([[last_date + i for i in days]])
+        X_scaled = scaler.transform(X)
         future_features = np.hstack([future_dates.T, X_scaled[-1:, 1:].repeat(len(days), axis=0)])
         future_prices = model.predict(future_features)
         
-        # Calculate returns
         last_price = y.iloc[-1]
         future_returns = [(price / last_price - 1) for price in future_prices]
-        
-        # Calculate expected values
         expected_values = [investment_amount * (1 + return_) for return_ in future_returns]
         
-        return dict(zip(days, expected_values))
+        return dict(zip(days, expected_values)), model_accuracy
     
     except Exception as e:
         logging.error(f"Error in predict_future_returns: {str(e)}")
         st.error(f"An error occurred while predicting future returns: {str(e)}")
-        return {}
+        return {}, 0
 
 # Main Streamlit app
 def main():
@@ -218,17 +227,15 @@ def main():
     end_date = st.sidebar.date_input('End Date', pd.to_datetime('today'))
     
     indicators = st.sidebar.multiselect('Select Technical Indicators', 
-                                        ['SMA', 'EMA', 'RSI'], 
-                                        default=['SMA'])
+                                        ['SMA20', 'SMA120', 'EMA20', 'RSI', 'VWAP'], 
+                                        default=['SMA20', 'SMA120'])
 
     # Fetch data
     data = get_stock_data(symbol, start_date, end_date)
     
     if not data.empty:
-        # Add indicators
         data = add_indicators(data)
 
-        # Plot stock data
         st.plotly_chart(plot_stock_data(data, indicators))
 
         # Display recommendation and sentiment
@@ -245,11 +252,22 @@ def main():
             st.subheader('Raw Data')
             st.write(data)
 
-        # Backtesting
-        st.subheader('Backtesting')
-        strategy = st.selectbox('Select Backtesting Strategy', ['SMA Crossover', 'RSI', 'MACD'])
-        backtest_result = backtest(data, strategy)
-        st.write(f'Strategy Return ({strategy}): {backtest_result:.2%}')
+        # Trading Strategies
+        st.subheader('Trading Strategies')
+        trends_momentum_return = trends_momentum_strategy(data)
+        mean_reversion_return = mean_reversion_strategy(data)
+        vwap_return = vwap_strategy(data)
+
+        st.write(f"Trends and Momentum Strategy Return: {trends_momentum_return:.2%}")
+        st.write(f"Mean Reversion Strategy Return: {mean_reversion_return:.2%}")
+        st.write(f"VWAP Strategy Return: {vwap_return:.2%}")
+
+        # Statistical Arbitrage (example with another stock)
+        other_symbol = st.selectbox('Select another stock for Statistical Arbitrage', popular_stocks)
+        other_data = get_stock_data(other_symbol, start_date, end_date)
+        if not other_data.empty:
+            stat_arb_return = statistical_arbitrage_strategy(data, other_data)
+            st.write(f"Statistical Arbitrage Strategy Return: {stat_arb_return:.2%}")
 
         # Future Returns Prediction
         st.subheader('Future Returns Prediction')
@@ -257,12 +275,13 @@ def main():
         investment_amount = st.number_input('Enter Investment Amount ($)', min_value=1, value=1000)
         
         with st.spinner('Calculating future returns...'):
-            future_returns = predict_future_returns(data, investment_amount)
+            future_returns, model_accuracy = predict_future_returns(data, investment_amount)
         
         if future_returns:
             st.write("Predicted future values of your investment:")
             for days, value in future_returns.items():
                 st.write(f"{days} days: ${value:.2f}")
+            st.write(f"Model Accuracy: {model_accuracy:.2%}")
         else:
             st.write("Unable to predict future returns at this time.")
 
