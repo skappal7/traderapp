@@ -1,6 +1,6 @@
-streamlit
-yfinance
-pandas
-plotly
-pandas-ta
-numpy
+streamlit==1.22.0
+yfinance==0.2.18
+pandas==1.5.3
+plotly==5.14.1
+numpy==1.23.5
+ta==0.10.2
