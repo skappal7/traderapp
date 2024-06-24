@@ -3,10 +3,9 @@ import yfinance as yf
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-import pandas_ta as ta
-from datetime import datetime, timedelta
+import ta
 import numpy as np
-from numpy import nan as NaN
+from datetime import datetime, timedelta
 
 # List of popular stocks and S&P 500 sector indices
 popular_stocks = ['AAPL', 'GOOGL', 'MSFT', 'AMZN', 'META', 'TSLA', 'NVDA', 'JPM', 'JNJ', 'V']
@@ -55,18 +54,18 @@ def plot_stock_data(data, indicators):
 # Function to calculate technical indicators
 def add_indicators(data, indicators):
     if 'SMA' in indicators:
-        data['SMA'] = ta.sma(data['Close'], length=20)
+        data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
     if 'EMA' in indicators:
-        data['EMA'] = ta.ema(data['Close'], length=20)
+        data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
     if 'RSI' in indicators:
-        data['RSI'] = ta.rsi(data['Close'], length=14)
+        data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
     return data
 
 # Function for simple backtesting
 def simple_backtest(data, strategy='SMA Crossover'):
     if strategy == 'SMA Crossover':
-        data['SMA_short'] = ta.sma(data['Close'], length=10)
-        data['SMA_long'] = ta.sma(data['Close'], length=30)
+        data['SMA_short'] = ta.trend.sma_indicator(data['Close'], window=10)
+        data['SMA_long'] = ta.trend.sma_indicator(data['Close'], window=30)
         data['Position'] = np.where(data['SMA_short'] > data['SMA_long'], 1, 0)
         data['Returns'] = data['Close'].pct_change()
         data['Strategy_Returns'] = data['Position'].shift(1) * data['Returns']
@@ -76,9 +75,9 @@ def simple_backtest(data, strategy='SMA Crossover'):
 # Function to get buy/sell/hold recommendation
 def get_recommendation(data):
     last_close = data['Close'].iloc[-1]
-    sma_20 = ta.sma(data['Close'], length=20).iloc[-1]
-    sma_50 = ta.sma(data['Close'], length=50).iloc[-1]
-    rsi = ta.rsi(data['Close'], length=14).iloc[-1]
+    sma_20 = ta.trend.sma_indicator(data['Close'], window=20).iloc[-1]
+    sma_50 = ta.trend.sma_indicator(data['Close'], window=50).iloc[-1]
+    rsi = ta.momentum.rsi(data['Close'], window=14).iloc[-1]
     
     if last_close > sma_20 and last_close > sma_50 and rsi < 70:
         return "Buy"
