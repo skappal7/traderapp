@@ -6,10 +6,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import ta
 from datetime import datetime, timedelta
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
-from tensorflow.keras.optimizers import Adam
+from fbprophet import Prophet
 import logging
 
 logging.basicConfig(level=logging.ERROR)
@@ -121,75 +118,34 @@ def create_marquee_ticker():
     
     return ticker_text.strip('| ')
 
-# Function to create and train LSTM model
-def create_lstm_model(X_train, y_train):
-    model = Sequential([
-        LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])),
-        LSTM(units=50, return_sequences=False),
-        Dense(units=25),
-        Dense(units=1)
-    ])
-    model.compile(optimizer=Adam(learning_rate=0.001), loss='mean_squared_error')
-    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
-    return model
-
-# Function to predict future returns
+# Function to predict future returns using Prophet
 def predict_future_returns(data, investment_amount, days=[5, 10, 20, 30, 40, 50, 60]):
     try:
-        # Ensure all required features are present
-        if 'SMA' not in data.columns:
-            data['SMA'] = ta.trend.sma_indicator(data['Close'], window=20)
-        if 'EMA' not in data.columns:
-            data['EMA'] = ta.trend.ema_indicator(data['Close'], window=20)
-        if 'RSI' not in data.columns:
-            data['RSI'] = ta.momentum.rsi(data['Close'], window=14)
+        # Prepare data for Prophet
+        df = data.reset_index()[['Date', 'Close']]
+        df.columns = ['ds', 'y']
         
-        features = ['Close', 'Volume', 'SMA', 'EMA', 'RSI']
-        data_for_prediction = data[features].copy()
+        # Create and fit the model
+        model = Prophet()
+        model.fit(df)
         
-        # Handle NaN values
-        data_for_prediction = data_for_prediction.dropna()
+        # Create future dates for prediction
+        future_dates = model.make_future_dataframe(periods=max(days))
         
-        scaler = MinMaxScaler(feature_range=(0, 1))
-        scaled_data = scaler.fit_transform(data_for_prediction)
+        # Make predictions
+        forecast = model.predict(future_dates)
         
-        X, y = [], []
-        look_back = 60
-        for i in range(look_back, len(scaled_data)):
-            X.append(scaled_data[i-look_back:i])
-            y.append(scaled_data[i, 0])  # Predicting the 'Close' price
-        
-        X, y = np.array(X), np.array(y)
-        
-        # Use 80% of data for training
-        train_size = int(len(X) * 0.8)
-        X_train, X_test = X[:train_size], X[train_size:]
-        y_train, y_test = y[:train_size], y[train_size:]
-        
-        model = create_lstm_model(X_train, y_train)
-        
-        # Predict future values
-        last_sequence = X[-1]
-        future_predictions = []
-        
-        for _ in range(max(days)):
-            next_pred = model.predict(last_sequence.reshape(1, look_back, len(features)))[0, 0]
-            future_predictions.append(next_pred)
-            last_sequence = np.roll(last_sequence, -1, axis=0)
-            last_sequence[-1] = np.array([next_pred] + [last_sequence[-1, i] for i in range(1, len(features))])
-        
-        # Inverse transform predictions (for 'Close' price only)
-        future_close_prices = scaler.inverse_transform(np.array(future_predictions).reshape(-1, 1))[:,0]
-        
-        # Calculate returns
+        # Calculate returns and expected values
         last_price = data['Close'].iloc[-1]
-        future_returns = [(price / last_price - 1) for price in future_close_prices]
+        future_returns = {}
+        for day in days:
+            future_price = forecast.iloc[-day]['yhat']
+            returns = (future_price / last_price) - 1
+            expected_value = investment_amount * (1 + returns)
+            future_returns[day] = expected_value
         
-        # Calculate expected values
-        expected_values = [investment_amount * (1 + future_returns[day-1]) for day in days]
-        
-        return dict(zip(days, expected_values))
-
+        return future_returns
+    
     except Exception as e:
         logging.error(f"Error in predict_future_returns: {str(e)}")
         st.error(f"An error occurred while predicting future returns: {str(e)}")
